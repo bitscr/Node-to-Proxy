@@ -83,8 +83,13 @@
             <code>{{ socksEndpoint }}</code>
             <button class="btn btn-mini" @click="copy(socksEndpoint)">复制</button>
           </div>
+          <div class="endpoint">
+            <span class="endpoint-tag socks">SOCKS5+令牌</span>
+            <code>{{ socksEndpointToken }}</code>
+            <button class="btn btn-mini" @click="copy(socksEndpointToken)">复制</button>
+          </div>
         </div>
-        <p class="hint">系统代理或浏览器/应用填入上方地址，流量将从当前选中的上游节点出口。</p>
+        <p class="hint">⚡ 出口需要鉴权：SOCKS5 用「用户名=令牌、密码留空」，或直接把令牌拼进地址（见「SOCKS5+令牌」）复制使用；HTTP 代理用 <code>Proxy-Authorization: Bearer &lt;令牌&gt;</code> 请求头。流量将从当前选中的上游节点出口。</p>
       </div>
 
       <div class="panel">
@@ -229,6 +234,11 @@ const AUTH = API_TOKEN ? { authorization: 'Bearer ' + API_TOKEN } : {};
 
 const { createApp } = Vue;
 
+function endpointHost() {
+  const bare = location.hostname.replace(/^\[|\]$/g, '');
+  return bare.includes(':') ? `[${bare}]` : bare;
+}
+
 createApp({
   data() {
     return {
@@ -239,8 +249,10 @@ createApp({
       nodes: [],
       status: { mode: 'manual', selectedNodeId: null, nodeCount: 0 },
       filter: '',
-      httpEndpoint: location.href.replace(/:[\d]+/, ''),
-      socksEndpoint: location.href.replace(/:[\d]+/, ''),
+      httpEndpoint: `http://${endpointHost()}`,
+      socksEndpoint: `socks5://${endpointHost()}:18998`,
+      httpEndpointToken: `http://${endpointHost()}:18999`,
+      socksEndpointToken: `socks5://${endpointHost()}:18998`,
       logs: [],
       importText: '',
       importResult: null,
@@ -300,9 +312,11 @@ createApp({
         this.nodes = nodes.data;
         this.status = status.data;
         const ep = (status.data.endpoints || {});
-        const host = location.hostname.includes(':') ? `[${location.hostname}]` : location.hostname;
+        const host = endpointHost();
         this.httpEndpoint = `http://${host}:${ep.httpProxyPort || 18999}`;
         this.socksEndpoint = `socks5://${host}:${ep.socksPort || 18998}`;
+        const token = (window.__CONFIG__ || {}).apiToken;
+        this.socksEndpointToken = token ? `socks5://${token}:@${host}:${ep.socksPort || 18998}` : this.socksEndpoint;
         this.portForm = { httpProxyPort: ep.httpProxyPort || 18999, socksPort: ep.socksPort || 18998 };
         this.connected = true;
         this.pushLog('info', '已刷新节点与状态');
