@@ -84,18 +84,32 @@
         <div class="panel-head">
           <span class="panel-title">⚡ 出口端点</span>
         </div>
-        <div class="endpoint-row">
+        <div class="endpoint-row" v-if="v6Available">
           <div class="endpoint">
-            <span class="endpoint-tag http">HTTP</span>
+            <span class="endpoint-tag http">HTTP · v6</span>
             <code>{{ httpEndpoint }}</code>
             <button class="btn btn-mini" @click="copy(httpEndpoint)">复制</button>
           </div>
           <div class="endpoint">
-            <span class="endpoint-tag socks">SOCKS5</span>
+            <span class="endpoint-tag socks">SOCKS5 · v6</span>
             <code>{{ socksEndpoint }}</code>
             <button class="btn btn-mini" @click="copy(socksEndpoint)">复制</button>
           </div>
         </div>
+        <div class="endpoint-row" v-if="v4Available">
+          <div class="endpoint">
+            <span class="endpoint-tag http">HTTP · v4</span>
+            <code>{{ v4HttpEndpoint }}</code>
+            <button class="btn btn-mini" @click="copy(v4HttpEndpoint)">复制</button>
+          </div>
+          <div class="endpoint">
+            <span class="endpoint-tag socks">SOCKS5 · v4</span>
+            <code>{{ v4SocksEndpoint }}</code>
+            <button class="btn btn-mini" @click="copy(v4SocksEndpoint)">复制</button>
+          </div>
+        </div>
+        <p class="hint" v-if="v6Unavailable">{{ v6Unavailable }}</p>
+        <p class="hint" v-if="v4Unavailable">{{ v4Unavailable }}</p>
         <p class="hint">🎯 代理出口无需密码，但受 IP 白名单保护：只有「设置 → IP 白名单」中登记的来源地址能访问这两个端口，其它来源一律被防火墙拒绝。当前白名单 <b>{{ allowlist.length }}</b> 条，防火墙 <b>{{ firewallApplied ? '已生效' : '未生效' }}</b>。流量将从当前选中的上游节点出口。</p>
       </div>
 
@@ -281,6 +295,12 @@ createApp({
       filter: '',
       httpEndpoint: `http://${endpointHost()}`,
       socksEndpoint: `socks5://${endpointHost()}:18998`,
+      v4HttpEndpoint: '',
+      v4SocksEndpoint: '',
+      v6Available: false,
+      v4Available: false,
+      v6Unavailable: '',
+      v4Unavailable: '',
       allowlist: [],
       newAllowedIp: '',
       firewallApplied: false,
@@ -442,9 +462,17 @@ createApp({
         this.nodes = nodes.data;
         this.status = status.data;
         const ep = (status.data.endpoints || {});
-        const host = endpointHost();
-        this.httpEndpoint = `http://${host}:${ep.httpProxyPort || 18999}`;
-        this.socksEndpoint = `socks5://${host}:${ep.socksPort || 18998}`;
+        const net = ep.network || {};
+        const host6 = net.ipv6 ? (net.ipv6.includes(':') ? `[${net.ipv6}]` : net.ipv6) : '';
+        const host4 = net.ipv4 || '';
+        this.httpEndpoint = host6 ? `http://${host6}:${ep.httpProxyPort || 18999}` : '';
+        this.socksEndpoint = host6 ? `socks5://${host6}:${ep.socksPort || 18998}` : '';
+        this.v4HttpEndpoint = host4 ? `http://${host4}:${ep.httpProxyPort || 18999}` : '';
+        this.v4SocksEndpoint = host4 ? `socks5://${host4}:${ep.socksPort || 18998}` : '';
+        this.v6Available = !!net.ipv6;
+        this.v4Available = !!net.ipv4;
+        this.v6Unavailable = net.ipv6 ? '' : '本机未检测到可用 IPv6 入口';
+        this.v4Unavailable = net.ipv4 ? '' : (net.warp ? 'IPv4 仅为 WARP 出站（无入站地址），v4 端点不可用 —— 仅 IPv6 可访问' : '本机未检测到可用 IPv4 入口');
         this.portForm = { httpProxyPort: ep.httpProxyPort || 18999, socksPort: ep.socksPort || 18998 };
         this.connected = true;
         this.pushLog('info', '已刷新节点与状态');

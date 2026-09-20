@@ -158,7 +158,9 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
   const endpoints = {
     webPort: Number(ports.webPort) || 8080,
     httpProxyPort: Number(ports.httpProxyPort) || 18999,
-    socksPort: Number(ports.socksPort) || 18998
+    socksPort: Number(ports.socksPort) || 18998,
+    // 可入站地址探测（warp 仅出站时 ipv4 为 null）
+    network: ports.network || { ipv4: null, ipv6: null, warp: false }
   };
 
   const settingsFile = path.join(dataDir, 'settings.json');

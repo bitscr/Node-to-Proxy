@@ -1,9 +1,37 @@
 'use strict';
 
 const path = require('node:path');
+const os = require('node:os');
 const { ConfigStore } = require('./src/config-store');
 const { NodeManager } = require('./src/node-manager');
 const { createApplication } = require('./src/app');
+
+// 探测本机可入站的公网地址（区分真实入口 vs 仅 WARP 出站）
+// WARP 隧道的 IPv4 只是出站出口，外部无法反向进入，故不算入口。
+function detectPublicAddresses() {
+  const ifaces = os.networkInterfaces();
+  let ipv4 = null;
+  let ipv6 = null;
+  let warp = false;
+  for (const [name, addrs] of Object.entries(ifaces)) {
+    if (name === 'warp') warp = true;
+    if (name === 'lo' || name === 'docker0' || name.startsWith('veth') || name.startsWith('docker')) continue;
+    for (const a of addrs || []) {
+      if (!a || a.internal) continue;
+      if (a.family === 'IPv4') {
+        const ip = a.address;
+        const isPrivate = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip);
+        if (!isPrivate) ipv4 = ip; // 非隧道的真实入口
+      } else if (a.family === 'IPv6') {
+        const ip = a.address.split('%')[0];
+        if (ip !== '::1' && !ip.startsWith('fe80') && !ip.startsWith('fc') && !ip.startsWith('fd')) {
+          ipv6 = ip;
+        }
+      }
+    }
+  }
+  return { ipv4, ipv6, warp };
+}
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const API_TOKEN = process.env.API_TOKEN || '';
@@ -39,7 +67,7 @@ async function main() {
     healthTimeoutMs: HEALTH_TIMEOUT_MS,
     bindHost: BIND_HOST,
     dataDir: DATA_DIR,
-    ports: effectivePorts,
+    ports: { ...effectivePorts, network: detectPublicAddresses() },
     // 代理出口鉴权由防火墙白名单负责，这里显式关闭 Bearer 要求
     proxyAuthRequired: false
   });
