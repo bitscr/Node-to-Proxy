@@ -21,6 +21,8 @@ class NodeManager {
     this.state = {
       nodes: [],
       selectedNodeId: null,
+      activeNodeId: null,
+      activeChangedAt: null,
       mode: 'manual',
       lastSwitchAt: null
     };
@@ -56,6 +58,9 @@ class NodeManager {
     const usableCount = this.state.nodes.filter(node => this._usable(node)).length;
     return {
       selectedNodeId: this.state.selectedNodeId,
+      // 最近一次实际流量走的节点（无论手动/自动/轮询），无流量时为空
+      activeNodeId: this.state.activeNodeId || null,
+      activeChangedAt: this.state.activeChangedAt || null,
       mode: this.state.mode,
       nodeCount: this.state.nodes.length,
       usableNodeCount: usableCount
@@ -123,6 +128,7 @@ class NodeManager {
     if (this.state.mode === 'manual') {
       const selected = pool.find(node => node.id === this.state.selectedNodeId);
       if (!selected) throw new Error('未选择可用的上游节点');
+      this._markActive(selected);
       return { ...selected };
     }
 
@@ -130,6 +136,7 @@ class NodeManager {
       const decision = this._decideBestSwitch();
       if (decision) this._applySwitch(decision, Date.now());
       const selected = pool.find(node => node.id === this.state.selectedNodeId) || pool[0];
+      this._markActive(selected);
       return { ...selected };
     }
 
@@ -138,7 +145,15 @@ class NodeManager {
     const selected = pool[index];
     this.roundRobinIndex = (index + 1) % pool.length;
     this.state.selectedNodeId = selected.id;
+    this._markActive(selected);
     return { ...selected };
+  }
+
+  // 记录最近一次实际流量走到的节点（供总览展示，无论哪种选路模式）
+  _markActive(node) {
+    if (!node) return;
+    this.state.activeNodeId = node.id;
+    this.state.activeChangedAt = new Date().toISOString();
   }
 
   // 健康检查完成后的自主重选（带冷却与延迟改善阈值，防止抖动）

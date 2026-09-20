@@ -68,9 +68,10 @@
           <div class="card-hint">未检测 {{ nodes.filter(n => n.health === 'unknown').length }}</div>
         </div>
         <div class="card">
-          <div class="card-label">当前选中</div>
-          <div class="card-value small">{{ current ? current.name : '—' }}</div>
-          <div class="card-hint" v-if="current">{{ current.type }} · {{ current.host }}:{{ current.port }}</div>
+          <div class="card-label">{{ currentLabel }}</div>
+          <div class="card-value small">{{ displayNode ? displayNode.name : '—' }}</div>
+          <div class="card-hint" v-if="displayNode">{{ displayNode.type }} · {{ displayNode.host }}:{{ displayNode.port }}</div>
+          <div class="card-hint" v-if="activeChangedText">{{ activeChangedText }}</div>
         </div>
         <div class="card">
           <div class="card-label">运行模式</div>
@@ -243,10 +244,8 @@
         <ul class="about-list">
           <li><b>手动添加节点：</b>在「导入」页填写协议、主机、端口提交即可。</li>
           <li><b>支持的协议：</b>http / https / socks5 / vless（ws+tls），粘贴链接批量导入即可。</li>
-          <li><b>出口鉴权：</b>若服务端设置了 API_TOKEN，代理出口需要<br>
-            <code>Proxy-Authorization: Bearer &lt;令牌&gt;</code>（HTTP），<br>
-            SOCKS5 使用「用户名=令牌、密码留空」或任何已导入节点的用户名/密码。</li>
-          <li><b>安全：</b>拒绝指向本地出口端口的代理回环；健康检查纯 TCP 拨测。</li>
+          <li><b>出口访问：</b>代理端口（HTTP 38080 / SOCKS5 38081）<b>无需密码</b>，但受 IP 白名单限制 —— 只有「设置 → 🎯 IP 白名单」里登记的来源地址才能访问，其余一律被防火墙拒绝。控制台本身需要密码登录（密码即 server 的 API_TOKEN，见 <code>/opt/node-to-proxy/.env</code>）。</li>
+          <li><b>安全：</b>拒绝指向本地出口端口的代理回环；健康检查按协议实测（普通节点 TCP 拨测，vless 节点真实隧道拨测）。</li>
         </ul>
       </div>
     </section>
@@ -309,6 +308,25 @@ createApp({
     },
     current() {
       return this.nodes.find(n => n.id === this.status.selectedNodeId) || null;
+    },
+    // 手动模式展示固定选中节点；自动/轮询展示最近一次实际流量的节点
+    displayNode() {
+      if (this.status.mode === 'manual') return this.current;
+      const id = this.status.activeNodeId || this.status.selectedNodeId;
+      return this.nodes.find(n => n.id === id) || this.current || null;
+    },
+    currentLabel() {
+      if (this.status.mode === 'auto') return '当前生效 · 自动选路';
+      if (this.status.mode === 'round-robin') return '当前生效 · 轮询';
+      return '当前选中';
+    },
+    activeChangedText() {
+      if (this.status.mode === 'manual') return '';
+      if (!this.status.activeNodeId) return '尚无流量，等待首个请求后显示实际走出的节点';
+      const at = this.status.activeChangedAt ? new Date(this.status.activeChangedAt) : null;
+      if (!at || Number.isNaN(at.getTime())) return '';
+      const pad = n => String(n).padStart(2, '0');
+      return `最近流量 ${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
     },
     modeLabel() {
       return { manual: '手动', auto: '自动', 'round-robin': '轮询' }[this.status.mode] || this.status.mode;
