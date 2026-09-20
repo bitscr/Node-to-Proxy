@@ -172,6 +172,24 @@
     <!-- 设置 -->
     <section v-if="tab === 'settings'" class="content">
       <div class="panel">
+        <div class="panel-head"><span class="panel-title">🔌 出口端口</span></div>
+        <div class="formgrid">
+          <div>
+            <label class="card-label">HTTP 代理端口</label>
+            <input class="input" type="number" min="1" max="65535" v-model.number="portForm.httpProxyPort">
+          </div>
+          <div>
+            <label class="card-label">SOCKS5 端口</label>
+            <input class="input" type="number" min="1" max="65535" v-model.number="portForm.socksPort">
+          </div>
+        </div>
+        <div class="btnrow">
+          <button class="btn btn-primary" @click="savePorts" :disabled="busy || savingPorts">保存端口（自动重启生效）</button>
+          <span class="hint inline" v-if="savingPorts">正在重启服务…</span>
+        </div>
+        <p class="hint">修改后服务会在数秒内自动重启并监听新端口，页面随后需要按新地址访问（保存前请确认新端口未被占用）。</p>
+      </div>
+      <div class="panel">
         <div class="panel-head"><span class="panel-title">🔄 选路模式</span></div>
         <div class="modegrid">
           <div class="mode-card" :class="{ active: status.mode === 'manual' }" @click="setMode('manual')">
@@ -192,7 +210,7 @@
         <div class="panel-head"><span class="panel-title">ℹ️ 关于</span></div>
         <ul class="about-list">
           <li><b>手动添加节点：</b>在「导入」页填写协议、主机、端口提交即可。</li>
-          <li><b>不支持的协议：</b>仅支持 http / https / socks5 三种上游；vmess/vless/trojan 等需先转换为这三种才能接入。</li>
+          <li><b>支持的协议：</b>http / https / socks5 / vless（ws+tls），粘贴链接批量导入即可。</li>
           <li><b>出口鉴权：</b>若服务端设置了 API_TOKEN，代理出口需要<br>
             <code>Proxy-Authorization: Bearer &lt;令牌&gt;</code>（HTTP），<br>
             SOCKS5 使用「用户名=令牌、密码留空」或任何已导入节点的用户名/密码。</li>
@@ -226,7 +244,9 @@ createApp({
       logs: [],
       importText: '',
       importResult: null,
-      manual: { name: '', type: 'http', host: '', port: 8080, username: '', password: '' }
+      manual: { name: '', type: 'http', host: '', port: 8080, username: '', password: '' },
+      portForm: { httpProxyPort: 18999, socksPort: 18998 },
+      savingPorts: false
     };
   },
   computed: {
@@ -283,6 +303,7 @@ createApp({
         const host = location.hostname.includes(':') ? `[${location.hostname}]` : location.hostname;
         this.httpEndpoint = `http://${host}:${ep.httpProxyPort || 18999}`;
         this.socksEndpoint = `socks5://${host}:${ep.socksPort || 18998}`;
+        this.portForm = { httpProxyPort: ep.httpProxyPort || 18999, socksPort: ep.socksPort || 18998 };
         this.connected = true;
         this.pushLog('info', '已刷新节点与状态');
       } catch (error) {
@@ -381,6 +402,28 @@ createApp({
       } catch (error) {
         this.pushLog('error', '切换模式失败：' + error.message);
       } finally { this.busy = false; }
+    },
+    async savePorts() {
+      const httpProxyPort = Number(this.portForm.httpProxyPort);
+      const socksPort = Number(this.portForm.socksPort);
+      if (!Number.isInteger(httpProxyPort) || httpProxyPort < 1 || httpProxyPort > 65535) {
+        this.pushLog('error', 'HTTP 代理端口无效'); return;
+      }
+      if (!Number.isInteger(socksPort) || socksPort < 1 || socksPort > 65535) {
+        this.pushLog('error', 'SOCKS5 端口无效'); return;
+      }
+      this.savingPorts = true;
+      try {
+        const result = await this.api('/api/settings', {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ httpProxyPort, socksPort })
+        });
+        this.portForm = { httpProxyPort: result.data.endpoints.httpProxyPort, socksPort: result.data.endpoints.socksPort };
+        this.pushLog('ok', `端口已保存：HTTP ${result.data.endpoints.httpProxyPort} / SOCKS5 ${result.data.endpoints.socksPort}，服务重启中…`);
+      } catch (error) {
+        this.pushLog('error', '保存端口失败：' + error.message);
+      } finally { this.savingPorts = false; }
     },
     toggleSide() { this.tab = 'settings'; },
     async copy(text) {

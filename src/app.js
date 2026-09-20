@@ -70,7 +70,7 @@ function trackSockets(server) {
   return server;
 }
 
-function serveStatic(res, pathname) {
+function serveStatic(res, pathname, configJson) {
   const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
   const file = path.resolve(PUBLIC_DIR, relative);
   if (!file.startsWith(PUBLIC_DIR + path.sep)) {
@@ -86,16 +86,25 @@ function serveStatic(res, pathname) {
       '.png': 'image/png',
       '.ico': 'image/x-icon'
     }[path.extname(file).toLowerCase()] || 'application/octet-stream';
+    let body = content;
+    // 注入运行配置（API 令牌、出口端口），前端 window.__CONFIG__ 消费
+    if (type === 'text/html; charset=utf-8' && configJson) {
+      const injected = Buffer.from(
+        `<script>window.__CONFIG__ = ${JSON.stringify(configJson)};</script>`,
+        'utf8'
+      );
+      body = Buffer.concat([injected, content]);
+    }
     res.writeHead(200, {
       'content-type': type,
-      'content-length': content.length,
+      'content-length': body.length,
       'cache-control': 'no-cache'
     });
-    res.end(content);
+    res.end(body);
   });
 }
 
-async function createApplication({ manager, apiToken = '', healthIntervalMs = 30000, healthTimeoutMs = 3000, proxyAuthRequired, bindHost = '127.0.0.1', ports = {} }) {
+async function createApplication({ manager, apiToken = '', healthIntervalMs = 30000, healthTimeoutMs = 3000, proxyAuthRequired, bindHost = '127.0.0.1', ports = {}, dataDir = path.join(__dirname, '..', 'data') }) {
   let closed = false;
 
   async function checkNode(id) {
@@ -151,6 +160,23 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
     socksPort: Number(ports.socksPort) || 18998
   };
 
+  const settingsFile = path.join(dataDir, 'settings.json');
+
+  async function readSettings() {
+    try {
+      return JSON.parse(await fs.promises.readFile(settingsFile, 'utf8'));
+    } catch {
+      return {};
+    }
+  }
+
+  async function writeSettings(patch) {
+    const current = await readSettings();
+    const next = { ...current, ...patch };
+    await fs.promises.writeFile(settingsFile, JSON.stringify(next, null, 2));
+    return next;
+  }
+
   const apiServer = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
@@ -158,7 +184,10 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
         return json(res, 200, { ok: true, status: manager.getStatus(), endpoints });
       }
       if (!url.pathname.startsWith('/api/')) {
-        return serveStatic(res, url.pathname);
+        return serveStatic(res, url.pathname, {
+          apiToken: apiToken || '',
+          endpoints
+        });
       }
       if (!bearerMatches(req.headers.authorization, apiToken)) {
         res.setHeader('www-authenticate', 'Bearer');
@@ -188,6 +217,28 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
       if (url.pathname === '/api/nodes/check-all' && req.method === 'POST') {
         await checkAll();
         return json(res, 200, { ok: true, data: manager.listNodes() });
+      }
+      if (url.pathname === '/api/settings' && req.method === 'GET') {
+        const saved = await readSettings();
+        return json(res, 200, { ok: true, data: { endpoints, settings: saved } });
+      }
+      if (url.pathname === '/api/settings' && req.method === 'PATCH') {
+        const body = await readJson(req);
+        const patch = {};
+        for (const key of ['httpProxyPort', 'socksPort', 'webPort']) {
+          if (body[key] !== undefined) {
+            const port = Number(body[key]);
+            if (!Number.isInteger(port) || port < 1 || port > 65535) {
+              throw new Error(`端口无效：${key}`);
+            }
+            patch[key] = port;
+          }
+        }
+        if (Object.keys(patch).length === 0) throw new Error('没有可修改的设置');
+        const saved = await writeSettings(patch);
+        // 端口变更需要重启监听：先回响应，再让 systemd 拉起新进程
+        setTimeout(() => process.exit(0), 250);
+        return json(res, 200, { ok: true, data: { endpoints: { ...endpoints, ...patch }, settings: saved }, restarting: true });
       }
 
       const match = url.pathname.match(/^\/api\/nodes\/([^/]+)(?:\/(select|check))?$/);

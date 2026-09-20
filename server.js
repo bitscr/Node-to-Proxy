@@ -20,32 +20,45 @@ async function main() {
   const manager = new NodeManager({ store, localPorts: [HTTP_PROXY_PORT, SOCKS_PORT] });
   await manager.load();
 
+  // 运行时端口设置（网页端可改）优先于环境变量
+  let runtimePorts = {};
+  try {
+    const settingsText = await require('node:fs').promises.readFile(path.join(DATA_DIR, 'settings.json'), 'utf8');
+    runtimePorts = JSON.parse(settingsText);
+  } catch { /* 无设置文件则全部用环境变量 */ }
+  const effectivePorts = {
+    webPort: Number(runtimePorts.webPort) || WEB_PORT,
+    httpProxyPort: Number(runtimePorts.httpProxyPort) || HTTP_PROXY_PORT,
+    socksPort: Number(runtimePorts.socksPort) || SOCKS_PORT
+  };
+
   const application = await createApplication({
     manager,
     apiToken: API_TOKEN,
     healthIntervalMs: HEALTH_INTERVAL_MS,
     healthTimeoutMs: HEALTH_TIMEOUT_MS,
     bindHost: BIND_HOST,
-    ports: { webPort: WEB_PORT, httpProxyPort: HTTP_PROXY_PORT, socksPort: SOCKS_PORT }
+    dataDir: DATA_DIR,
+    ports: effectivePorts
   });
 
   await new Promise((resolve, reject) => {
     application.apiServer.once('error', reject);
-    application.apiServer.listen(WEB_PORT, BIND_HOST, resolve);
+    application.apiServer.listen(effectivePorts.webPort, BIND_HOST, resolve);
   });
   await new Promise((resolve, reject) => {
     application.httpProxyServer.once('error', reject);
-    application.httpProxyServer.listen(HTTP_PROXY_PORT, BIND_HOST, resolve);
+    application.httpProxyServer.listen(effectivePorts.httpProxyPort, BIND_HOST, resolve);
   });
   await new Promise((resolve, reject) => {
     application.socksProxyServer.once('error', reject);
-    application.socksProxyServer.listen(SOCKS_PORT, BIND_HOST, resolve);
+    application.socksProxyServer.listen(effectivePorts.socksPort, BIND_HOST, resolve);
   });
 
   console.log(`[node-to-proxy] 已启动`);
-  console.log(`[node-to-proxy] Web 控制台/API: http://${BIND_HOST}:${WEB_PORT}`);
-  console.log(`[node-to-proxy] HTTP 代理出口:  http://${BIND_HOST}:${HTTP_PROXY_PORT}`);
-  console.log(`[node-to-proxy] SOCKS5 代理出口: socks5://${BIND_HOST}:${SOCKS_PORT}`);
+  console.log(`[node-to-proxy] Web 控制台/API: http://${BIND_HOST}:${effectivePorts.webPort}`);
+  console.log(`[node-to-proxy] HTTP 代理出口:  http://${BIND_HOST}:${effectivePorts.httpProxyPort}`);
+  console.log(`[node-to-proxy] SOCKS5 代理出口: socks5://${BIND_HOST}:${effectivePorts.socksPort}`);
   console.log(`[node-to-proxy] 鉴权令牌:        ${API_TOKEN ? '已启用' : '未启用（仅限本机使用）'}`);
   console.log(`[node-to-proxy] 配置数据目录:    ${DATA_DIR}`);
 
