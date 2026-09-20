@@ -143,7 +143,7 @@
     <section v-if="tab === 'import'" class="content">
       <div class="panel">
         <div class="panel-head"><span class="panel-title">📥 批量导入节点</span></div>
-        <textarea class="textarea" v-model="importText" rows="10" placeholder="每行一个节点链接：&#10;http://user:pass@host:port#名称&#10;https://host:443#高匿&#10;socks5://host:1080#代理A"></textarea>
+        <textarea class="textarea" v-model="importText" rows="10" placeholder="每行一个节点链接：&#10;http://user:pass@host:port#名称&#10;https://host:443#高匿&#10;socks5://host:1080#代理A&#10;vless://uuid@host:443?security=tls&type=ws&path=%2F#CF优选"></textarea>
         <div class="btnrow">
           <button class="btn btn-primary" @click="doImport" :disabled="busy || !importText.trim()">导入节点</button>
           <span class="hint inline" v-if="importResult">共导入 {{ importResult }} 个节点</span>
@@ -221,8 +221,8 @@ createApp({
       nodes: [],
       status: { mode: 'manual', selectedNodeId: null, nodeCount: 0 },
       filter: '',
-      httpEndpoint: location.origin,
-      socksEndpoint: location.origin.replace(/^http/, 'socks5').replace(/:\d+$/, ':1080'),
+      httpEndpoint: location.href.replace(/:[\d]+/, ''),
+      socksEndpoint: location.href.replace(/:[\d]+/, ''),
       logs: [],
       importText: '',
       importResult: null,
@@ -279,6 +279,10 @@ createApp({
         const [nodes, status] = await Promise.all([this.api('/api/nodes'), this.api('/api/status')]);
         this.nodes = nodes.data;
         this.status = status.data;
+        const ep = (status.data.endpoints || {});
+        const host = location.hostname.includes(':') ? `[${location.hostname}]` : location.hostname;
+        this.httpEndpoint = `http://${host}:${ep.httpProxyPort || 18999}`;
+        this.socksEndpoint = `socks5://${host}:${ep.socksPort || 18998}`;
         this.connected = true;
         this.pushLog('info', '已刷新节点与状态');
       } catch (error) {

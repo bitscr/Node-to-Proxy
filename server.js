@@ -25,7 +25,8 @@ async function main() {
     apiToken: API_TOKEN,
     healthIntervalMs: HEALTH_INTERVAL_MS,
     healthTimeoutMs: HEALTH_TIMEOUT_MS,
-    bindHost: BIND_HOST
+    bindHost: BIND_HOST,
+    ports: { webPort: WEB_PORT, httpProxyPort: HTTP_PROXY_PORT, socksPort: SOCKS_PORT }
   });
 
   await new Promise((resolve, reject) => {

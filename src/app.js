@@ -95,7 +95,7 @@ function serveStatic(res, pathname) {
   });
 }
 
-async function createApplication({ manager, apiToken = '', healthIntervalMs = 30000, healthTimeoutMs = 3000, proxyAuthRequired, bindHost = '127.0.0.1' }) {
+async function createApplication({ manager, apiToken = '', healthIntervalMs = 30000, healthTimeoutMs = 3000, proxyAuthRequired, bindHost = '127.0.0.1', ports = {} }) {
   let closed = false;
 
   async function checkNode(id) {
@@ -145,11 +145,17 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
   const healthTimer = setInterval(() => void checkAll(), healthIntervalMs);
   healthTimer.unref?.();
 
+  const endpoints = {
+    webPort: Number(ports.webPort) || 8080,
+    httpProxyPort: Number(ports.httpProxyPort) || 18999,
+    socksPort: Number(ports.socksPort) || 18998
+  };
+
   const apiServer = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname === '/health' && req.method === 'GET') {
-        return json(res, 200, { ok: true, status: manager.getStatus() });
+        return json(res, 200, { ok: true, status: manager.getStatus(), endpoints });
       }
       if (!url.pathname.startsWith('/api/')) {
         return serveStatic(res, url.pathname);
@@ -160,7 +166,7 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
       }
 
       if (url.pathname === '/api/status' && req.method === 'GET') {
-        return json(res, 200, { ok: true, data: manager.getStatus() });
+        return json(res, 200, { ok: true, data: { ...manager.getStatus(), endpoints } });
       }
       if (url.pathname === '/api/nodes' && req.method === 'GET') {
         return json(res, 200, { ok: true, data: manager.listNodes() });
