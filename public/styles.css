@@ -24,6 +24,22 @@ body {
 
 [v-cloak] { display: none; }
 
+/* 登录门 */
+.login-gate {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(900px 500px at 30% -10%, #eaf4fd 0%, var(--bg) 60%);
+}
+.login-card {
+  width: 320px; padding: 34px 28px; border-radius: 16px;
+  background: var(--panel); border: 1px solid var(--line);
+  box-shadow: 0 12px 40px rgba(15,23,42,.12);
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.login-card .brand-icon { width: 52px; height: 52px; font-size: 26px; border-radius: 14px; }
+.login-input { width: 100%; text-align: center; }
+.login-btn { width: 100%; padding: 11px; }
+
 #app { display: flex; min-height: 100vh; }
 
 /* 侧边栏 */
@@ -118,6 +134,8 @@ body {
 .proto { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); text-transform: uppercase; }
 .proto.https { color: var(--amber); }
 .proto.socks5 { color: var(--green); }
+.proto-v4 { color: #0369a1; }
+.proto-v6 { color: #7c3aed; }
 .health { font-size: 12px; padding: 3px 9px; border-radius: 99px; }
 .health.healthy { color: var(--green); background: rgba(5,150,105,.1); }
 .health.unhealthy { color: var(--red); background: rgba(220,38,38,.1); }

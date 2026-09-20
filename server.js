@@ -39,7 +39,14 @@ async function main() {
     healthTimeoutMs: HEALTH_TIMEOUT_MS,
     bindHost: BIND_HOST,
     dataDir: DATA_DIR,
-    ports: effectivePorts
+    ports: effectivePorts,
+    // 代理出口鉴权由防火墙白名单负责，这里显式关闭 Bearer 要求
+    proxyAuthRequired: false
+  });
+
+  // 启动时尝试下发 IP 白名单防火墙（失败不阻断启动，稍后可手动触发）
+  application.allowlist.apply().catch(error => {
+    console.error('[node-to-proxy] 防火墙下发失败（稍后可通过设置页重试）:', error.message);
   });
 
   await new Promise((resolve, reject) => {

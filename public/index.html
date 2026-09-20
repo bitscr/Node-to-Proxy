@@ -9,6 +9,17 @@
 </head>
 <body>
 <div id="app" v-cloak>
+  <!-- 登录门：未认证时盖住全部内容 -->
+  <div v-if="needsLogin" class="login-gate">
+    <div class="login-card">
+      <div class="brand-icon">⇄</div>
+      <div class="brand-name">Node-to-Proxy</div>
+      <div class="brand-sub">节点代理出口管理 · 请输入访问密码</div>
+      <input class="input login-input" type="password" v-model="loginPassword" placeholder="访问密码" @keyup.enter="login">
+      <button class="btn btn-primary login-btn" @click="login" :disabled="loggingIn || !loginPassword">{{ loggingIn ? '验证中…' : '进入控制台' }}</button>
+      <p class="hint" v-if="loginError" style="color: var(--red);">{{ loginError }}</p>
+    </div>
+  </div>
   <!-- 侧边栏 -->
   <aside class="sidebar" :class="{ open: sidebarOpen }">
     <div class="brand">
@@ -83,13 +94,8 @@
             <code>{{ socksEndpoint }}</code>
             <button class="btn btn-mini" @click="copy(socksEndpoint)">复制</button>
           </div>
-          <div class="endpoint">
-            <span class="endpoint-tag socks">SOCKS5+令牌</span>
-            <code>{{ socksEndpointToken }}</code>
-            <button class="btn btn-mini" @click="copy(socksEndpointToken)">复制</button>
-          </div>
         </div>
-        <p class="hint">⚡ 出口需要鉴权：SOCKS5 用「用户名=令牌、密码留空」，或直接把令牌拼进地址（见「SOCKS5+令牌」）复制使用；HTTP 代理用 <code>Proxy-Authorization: Bearer &lt;令牌&gt;</code> 请求头。流量将从当前选中的上游节点出口。</p>
+        <p class="hint">🎯 代理出口无需密码，但受 IP 白名单保护：只有「设置 → IP 白名单」中登记的来源地址能访问这两个端口，其它来源一律被防火墙拒绝。当前白名单 <b>{{ allowlist.length }}</b> 条，防火墙 <b>{{ firewallApplied ? '已生效' : '未生效' }}</b>。流量将从当前选中的上游节点出口。</p>
       </div>
 
       <div class="panel">
@@ -177,6 +183,27 @@
     <!-- 设置 -->
     <section v-if="tab === 'settings'" class="content">
       <div class="panel">
+        <div class="panel-head"><span class="panel-title">🎯 IP 白名单（代理端口入口防火墙）</span></div>
+        <div class="filterbar">
+          <input class="input" v-model="newAllowedIp" placeholder="如 1.2.3.4 / 2001:db8::/64（IPv4 与 IPv6 均支持，可用前缀）" @keyup.enter="addAllowedIp">
+          <button class="btn btn-primary" @click="addAllowedIp" :disabled="busy || !newAllowedIp.trim()">添加</button>
+          <button class="btn" @click="applyFirewall" :disabled="busy">重新下发规则</button>
+        </div>
+        <p class="hint">只有下面登记的来源 IP/CIDR 可以访问 HTTP/SOCKS5 代理出口端口（38080 / 38081）。其余来源一律被防火墙 RST 拒绝。立即生效，无需重启。当前防火墙：<b>{{ firewallApplied ? '已生效' : '未生效' }}</b> <span v-if="firewallMsg" class="hint inline">{{ firewallMsg }}</span></p>
+        <table class="table" v-if="allowlist.length">
+          <thead><tr><th>地址 / 前缀</th><th>类型</th><th>添加时间</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="item in allowlist" :key="item.id">
+              <td class="node-name"><code>{{ item.cidr }}</code></td>
+              <td><span class="proto" :class="'proto-' + item.family">{{ item.family }}</span></td>
+              <td class="node-meta">{{ item.createdAt ? item.createdAt.replace('T',' ').slice(0,19) : '—' }}</td>
+              <td><div class="actions"><button class="btn btn-mini danger" @click="removeAllowedIp(item)">删除</button></div></td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="hint" v-else>白名单为空 —— 当前所有代理端口对外不可达。请把你的出口 IP 添加进来（可用 ip.sb / whatismyip 等查询）。</p>
+      </div>
+      <div class="panel">
         <div class="panel-head"><span class="panel-title">🔌 出口端口</span></div>
         <div class="formgrid">
           <div>
@@ -229,8 +256,6 @@
 <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js" onerror="document.body.innerHTML='&lt;center&gt;&lt;h2&gt;无法加载 Vue CDN，请检查网络&lt;/h2&gt;&lt;/center&gt;'"></script>
 <script>
 const CONFIG = window.__CONFIG__ || {};
-const API_TOKEN = CONFIG.apiToken || '';
-const AUTH = API_TOKEN ? { authorization: 'Bearer ' + API_TOKEN } : {};
 
 const { createApp } = Vue;
 
@@ -239,6 +264,8 @@ function endpointHost() {
   return bare.includes(':') ? `[${bare}]` : bare;
 }
 
+const OWNER_TOKEN_KEY = 'n2p_token';
+
 createApp({
   data() {
     return {
@@ -246,13 +273,19 @@ createApp({
       sidebarOpen: false,
       connected: false,
       busy: false,
+      needsLogin: false,
+      loggingIn: false,
+      loginPassword: '',
+      loginError: '',
       nodes: [],
       status: { mode: 'manual', selectedNodeId: null, nodeCount: 0 },
       filter: '',
       httpEndpoint: `http://${endpointHost()}`,
       socksEndpoint: `socks5://${endpointHost()}:18998`,
-      httpEndpointToken: `http://${endpointHost()}:18999`,
-      socksEndpointToken: `socks5://${endpointHost()}:18998`,
+      allowlist: [],
+      newAllowedIp: '',
+      firewallApplied: false,
+      firewallMsg: '',
       logs: [],
       importText: '',
       importResult: null,
@@ -293,14 +326,93 @@ createApp({
       this.tab = name;
       this.sidebarOpen = false;
     },
-    healthLabel(health) {
-      return { healthy: '正常', unhealthy: '异常', unknown: '未检测' }[health] || health;
+    async login() {
+      if (!this.loginPassword) return;
+      this.loggingIn = true;
+      this.loginError = '';
+      try {
+        // 用 /api/status 验证密码（token 即密码），成功则存入本地会话
+        const status = await this.api('/api/status', { token: this.loginPassword });
+        localStorage.setItem(OWNER_TOKEN_KEY, this.loginPassword);
+        this.needsLogin = false;
+        this.loginPassword = '';
+        this.status = status.data || this.status;
+        this.pushLog('ok', '登录成功');
+        await this.refreshAll();
+      } catch (error) {
+        this.loginError = '密码错误或服务不可用：' + error.message;
+      } finally {
+        this.loggingIn = false;
+      }
     },
     async api(path, options = {}) {
-      const response = await fetch(path, { ...options, headers: { ...AUTH, ...(options.headers || {}) } });
+      const token = options.token || localStorage.getItem(OWNER_TOKEN_KEY) || '';
+      const response = await fetch(path, {
+        ...options,
+        headers: {
+          ...(token ? { authorization: 'Bearer ' + token } : {}),
+          ...(options.headers || {})
+        }
+      });
       const body = await response.json().catch(() => ({}));
+      if (response.status === 401) this.needsLogin = true;
       if (!response.ok && !body.ok) throw new Error(body.error || ('HTTP ' + response.status));
       return body;
+    },
+    async refreshAllowlist() {
+      try {
+        const result = await this.api('/api/allowlist');
+        this.allowlist = result.data || [];
+        this.firewallApplied = true;
+        this.firewallMsg = '';
+      } catch (error) {
+        if (error.message && /防火墙|白名单/.test(error.message)) {
+          this.firewallApplied = false;
+          this.firewallMsg = error.message;
+        }
+      }
+    },
+    async addAllowedIp() {
+      const cidr = this.newAllowedIp.trim();
+      if (!cidr) return;
+      this.busy = true;
+      try {
+        await this.api('/api/allowlist', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ cidr })
+        });
+        this.pushLog('ok', `已添加白名单：${cidr}，防火墙规则已下发`);
+        this.newAllowedIp = '';
+        await this.refreshAllowlist();
+      } catch (error) {
+        this.pushLog('error', '白名单添加失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    async removeAllowedIp(item) {
+      if (!confirm(`确定从白名单移除 ${item.cidr}？`)) return;
+      this.busy = true;
+      try {
+        await this.api(`/api/allowlist/${item.id}`, { method: 'DELETE' });
+        this.pushLog('warn', `已移除白名单：${item.cidr}，防火墙规则已下发`);
+        await this.refreshAllowlist();
+      } catch (error) {
+        this.pushLog('error', '白名单移除失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    async applyFirewall() {
+      this.busy = true;
+      try {
+        const result = await this.api('/api/allowlist/apply', { method: 'POST' });
+        this.firewallApplied = true;
+        this.firewallMsg = result.firewall || '';
+        this.pushLog('ok', '防火墙规则已重新下发：' + (result.firewall || ''));
+      } catch (error) {
+        this.pushLog('error', '防火墙下发失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    healthLabel(health) {
+      return { healthy: '正常', unhealthy: '异常', unknown: '未检测' }[health] || health;
     },
     pushLog(level, text) {
       this.logs.push({ level, text, time: new Date().toLocaleTimeString('zh-CN', { hour12: false }) });
@@ -315,11 +427,10 @@ createApp({
         const host = endpointHost();
         this.httpEndpoint = `http://${host}:${ep.httpProxyPort || 18999}`;
         this.socksEndpoint = `socks5://${host}:${ep.socksPort || 18998}`;
-        const token = (window.__CONFIG__ || {}).apiToken;
-        this.socksEndpointToken = token ? `socks5://${token}:@${host}:${ep.socksPort || 18998}` : this.socksEndpoint;
         this.portForm = { httpProxyPort: ep.httpProxyPort || 18999, socksPort: ep.socksPort || 18998 };
         this.connected = true;
         this.pushLog('info', '已刷新节点与状态');
+        await this.refreshAllowlist();
       } catch (error) {
         this.connected = false;
         this.pushLog('error', '刷新失败：' + error.message);

@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 const { parseNodeBatch } = require('./node-parser');
 const { connectThroughUpstream, connectTunnelThroughUpstream, pipeTunnel } = require('./upstream');
 const { probeVlessNode } = require('./vless/lib');
+const { Allowlist, isCidr, familyOf, normalizeCidr } = require('./firewall');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
@@ -177,6 +178,11 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
     return next;
   }
 
+  const allowlist = new Allowlist(path.join(dataDir, 'allowlist.json'), {
+    webPort: endpoints.webPort,
+    proxyPorts: [endpoints.httpProxyPort, endpoints.socksPort]
+  });
+
   const apiServer = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
@@ -184,10 +190,8 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
         return json(res, 200, { ok: true, status: manager.getStatus(), endpoints });
       }
       if (!url.pathname.startsWith('/api/')) {
-        return serveStatic(res, url.pathname, {
-          apiToken: apiToken || '',
-          endpoints
-        });
+        // 注意：绝不注入 apiToken（它是控制台登录密码）；页面只在登录框里输入
+        return serveStatic(res, url.pathname, { endpoints });
       }
       if (!bearerMatches(req.headers.authorization, apiToken)) {
         res.setHeader('www-authenticate', 'Bearer');
@@ -239,6 +243,28 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
         // 端口变更需要重启监听：先回响应，再让 systemd 拉起新进程
         setTimeout(() => process.exit(0), 250);
         return json(res, 200, { ok: true, data: { endpoints: { ...endpoints, ...patch }, settings: saved }, restarting: true });
+      }
+      if (url.pathname === '/api/allowlist' && req.method === 'GET') {
+        return json(res, 200, { ok: true, data: allowlist.list() });
+      }
+      if (url.pathname === '/api/allowlist' && req.method === 'POST') {
+        const body = await readJson(req);
+        const values = (Array.isArray(body.cidrs) ? body.cidrs : [body.cidr || body.value]).filter(Boolean);
+        if (values.length === 0) throw new Error('缺少要添加的 IP/CIDR');
+        const added = [];
+        for (const value of values) added.push(allowlist.add(value));
+        const applied = await allowlist.apply();
+        return json(res, 201, { ok: true, data: allowlist.list(), added, firewall: applied });
+      }
+      if (url.pathname === '/api/allowlist/apply' && req.method === 'POST') {
+        const applied = await allowlist.apply();
+        return json(res, 200, { ok: true, data: allowlist.list(), firewall: applied });
+      }
+      const allowMatch = url.pathname.match(/^\/api\/allowlist\/([^/]+)$/);
+      if (allowMatch && req.method === 'DELETE') {
+        const removed = allowlist.remove(decodeURIComponent(allowMatch[1]));
+        const applied = await allowlist.apply();
+        return json(res, 200, { ok: true, data: allowlist.list(), removed, firewall: applied });
       }
 
       const match = url.pathname.match(/^\/api\/nodes\/([^/]+)(?:\/(select|check))?$/);
@@ -645,6 +671,7 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
     checkNode,
     checkAll,
     close,
+    allowlist,
     get requireProxyAuth() { return requireProxyAuth; }
   };
 }
