@@ -1,0 +1,15 @@
+{
+  "name": "node-to-proxy",
+  "version": "1.0.0",
+  "description": "多节点代理管理器：导入节点、手动/自动/轮询选路，输出本地 HTTP 与 SOCKS5 出口",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["proxy", "socks5", "http-proxy", "node-manager", "failover", "round-robin"],
+  "license": "MIT"
+}

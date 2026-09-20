@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node-to-Proxy · 节点代理控制台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect rx='7' width='32' height='32' fill='%230ea5e9'/%3E%3Cpath d='M8 11h16M11 17h10M13 23h6' stroke='white' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app" v-cloak>
+  <!-- 侧边栏 -->
+  <aside class="sidebar" :class="{ open: sidebarOpen }">
+    <div class="brand">
+      <div class="brand-icon">⇄</div>
+      <div class="brand-text">
+        <span class="brand-name">Node-to-Proxy</span>
+        <span class="brand-sub">节点代理出口管理</span>
+      </div>
+    </div>
+    <nav class="nav">
+      <a class="nav-item" :class="{ active: tab === 'dashboard' }" @click="switchTab('dashboard')">📊 总览</a>
+      <a class="nav-item" :class="{ active: tab === 'nodes' }" @click="switchTab('nodes')">📡 节点列表 <span class="badge" v-if="nodes.length">{{ nodes.length }}</span></a>
+      <a class="nav-item" :class="{ active: tab === 'import' }" @click="switchTab('import')">📥 批量导入</a>
+      <a class="nav-item" :class="{ active: tab === 'settings' }" @click="switchTab('settings')">⚙️ 设置</a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="status-dot" :class="connected ? 'ok' : 'bad'"></div>
+      {{ connected ? '服务已连接' : '服务未连接' }}
+    </div>
+  </aside>
+  <div class="scrim" v-if="sidebarOpen" @click="sidebarOpen = false"></div>
+
+  <!-- 主区域 -->
+  <main class="main">
+    <header class="topbar">
+      <button class="hamburger" @click="sidebarOpen = !sidebarOpen">☰</button>
+      <h1>{{ title }}</h1>
+      <div class="topbar-actions">
+        <span class="pill" :class="status.mode">{{ modeLabel }}</span>
+        <button class="btn btn-primary" @click="refreshAll" :disabled="busy">刷新</button>
+        <button class="btn" @click="toggleSide">关于</button>
+      </div>
+    </header>
+
+    <!-- 总览 -->
+    <section v-if="tab === 'dashboard'" class="content">
+      <div class="cards">
+        <div class="card">
+          <div class="card-label">节点总数</div>
+          <div class="card-value">{{ nodes.length }}</div>
+          <div class="card-hint">已启用 {{ nodes.filter(n => n.enabled).length }}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">健康节点</div>
+          <div class="card-value green">{{ nodes.filter(n => n.health === 'healthy').length }}</div>
+          <div class="card-hint">未检测 {{ nodes.filter(n => n.health === 'unknown').length }}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">当前选中</div>
+          <div class="card-value small">{{ current ? current.name : '—' }}</div>
+          <div class="card-hint" v-if="current">{{ current.type }} · {{ current.host }}:{{ current.port }}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">运行模式</div>
+          <div class="card-value small">{{ modeLabel }}</div>
+          <div class="card-hint">{{ modeDescription }}</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">⚡ 出口端点</span>
+        </div>
+        <div class="endpoint-row">
+          <div class="endpoint">
+            <span class="endpoint-tag http">HTTP</span>
+            <code>{{ httpEndpoint }}</code>
+            <button class="btn btn-mini" @click="copy(httpEndpoint)">复制</button>
+          </div>
+          <div class="endpoint">
+            <span class="endpoint-tag socks">SOCKS5</span>
+            <code>{{ socksEndpoint }}</code>
+            <button class="btn btn-mini" @click="copy(socksEndpoint)">复制</button>
+          </div>
+        </div>
+        <p class="hint">系统代理或浏览器/应用填入上方地址，流量将从当前选中的上游节点出口。</p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">🕒 最近日志</span>
+          <button class="btn btn-mini" @click="logs = []">清空</button>
+        </div>
+        <div class="logbox" v-if="logs.length">
+          <div v-for="(log, index) in logs.slice(-50).reverse()" :key="index" class="log-line" :class="log.level">
+            <span class="log-time">{{ log.time }}</span> {{ log.text }}
+          </div>
+        </div>
+        <p class="hint" v-else>暂无日志。切换到自动/轮询模式后，这里会显示故障切换与选路事件。</p>
+      </div>
+    </section>
+
+    <!-- 节点列表 -->
+    <section v-if="tab === 'nodes'" class="content">
+      <div class="filterbar">
+        <input class="input" v-model="filter" placeholder="搜索名称 / 主机 / 协议…">
+        <button class="btn" @click="checkAll" :disabled="busy">🩺 全部健康检查</button>
+      </div>
+      <div class="panel" v-if="nodes.length">
+        <table class="table">
+          <thead>
+            <tr><th>名称</th><th>协议</th><th>地址</th><th>延迟</th><th>状态</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="node in filtered" :key="node.id">
+              <td>
+                <div class="node-name">{{ node.name }}</div>
+                <div class="node-meta">{{ node.username ? '有鉴权' : '匿名' }} · {{ node.enabled ? '启用' : '停用' }}</div>
+              </td>
+              <td><span class="proto" :class="node.type">{{ node.type }}</span></td>
+              <td><code>{{ node.host }}:{{ node.port }}</code></td>
+              <td>
+                <span v-if="node.latencyMs !== null && node.latencyMs !== undefined">{{ node.latencyMs }} ms</span>
+                <span v-else>—</span>
+              </td>
+              <td><span class="health" :class="node.health">{{ healthLabel(node.health) }}</span></td>
+              <td class="actions">
+                <button class="btn btn-mini" @click="selectNode(node)" :disabled="busy">选用</button>
+                <button class="btn btn-mini" @click="checkNode(node)" :disabled="busy">检测</button>
+                <button class="btn btn-mini danger" @click="removeNode(node)">删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="panel empty" v-else>
+        <p>还没有节点。去「批量导入」粘贴订阅链接，或点击右上「关于」查看手动添加示例。</p>
+      </div>
+    </section>
+
+    <!-- 导入 -->
+    <section v-if="tab === 'import'" class="content">
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">📥 批量导入节点</span></div>
+        <textarea class="textarea" v-model="importText" rows="10" placeholder="每行一个节点链接：&#10;http://user:pass@host:port#名称&#10;https://host:443#高匿&#10;socks5://host:1080#代理A"></textarea>
+        <div class="btnrow">
+          <button class="btn btn-primary" @click="doImport" :disabled="busy || !importText.trim()">导入节点</button>
+          <span class="hint inline" v-if="importResult">共导入 {{ importResult }} 个节点</span>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">➕ 手动添加单节点</span></div>
+        <div class="formgrid">
+          <input class="input" v-model="manual.name" placeholder="名称（可选）">
+          <select class="input" v-model="manual.type">
+            <option value="http">http</option>
+            <option value="https">https</option>
+            <option value="socks5">socks5</option>
+          </select>
+          <input class="input" v-model="manual.host" placeholder="主机">
+          <input class="input" v-model.number="manual.port" placeholder="端口">
+          <input class="input" v-model="manual.username" placeholder="用户名（可选）">
+          <input class="input" v-model="manual.password" placeholder="密码（可选）">
+        </div>
+        <div class="btnrow">
+          <button class="btn btn-primary" @click="addManual" :disabled="busy">添加节点</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 设置 -->
+    <section v-if="tab === 'settings'" class="content">
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">🔄 选路模式</span></div>
+        <div class="modegrid">
+          <div class="mode-card" :class="{ active: status.mode === 'manual' }" @click="setMode('manual')">
+            <div class="mode-title">手动</div>
+            <div class="mode-desc">固定使用你选中的节点，除非手动切换。</div>
+          </div>
+          <div class="mode-card" :class="{ active: status.mode === 'auto' }" @click="setMode('auto')">
+            <div class="mode-title">自动</div>
+            <div class="mode-desc">定期健康检查，自动选用延迟最低的可用节点。</div>
+          </div>
+          <div class="mode-card" :class="{ active: status.mode === 'round-robin' }" @click="setMode('round-robin')">
+            <div class="mode-title">轮询</div>
+            <div class="mode-desc">在健康节点间轮流选择，均衡分发连接。</div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">ℹ️ 关于</span></div>
+        <ul class="about-list">
+          <li><b>手动添加节点：</b>在「导入」页填写协议、主机、端口提交即可。</li>
+          <li><b>不支持的协议：</b>仅支持 http / https / socks5 三种上游；vmess/vless/trojan 等需先转换为这三种才能接入。</li>
+          <li><b>出口鉴权：</b>若服务端设置了 API_TOKEN，代理出口需要<br>
+            <code>Proxy-Authorization: Bearer &lt;令牌&gt;</code>（HTTP），<br>
+            SOCKS5 使用「用户名=令牌、密码留空」或任何已导入节点的用户名/密码。</li>
+          <li><b>安全：</b>拒绝指向本地出口端口的代理回环；健康检查纯 TCP 拨测。</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js" onerror="document.body.innerHTML='&lt;center&gt;&lt;h2&gt;无法加载 Vue CDN，请检查网络&lt;/h2&gt;&lt;/center&gt;'"></script>
+<script>
+const CONFIG = window.__CONFIG__ || {};
+const API_TOKEN = CONFIG.apiToken || '';
+const AUTH = API_TOKEN ? { authorization: 'Bearer ' + API_TOKEN } : {};
+
+const { createApp } = Vue;
+
+createApp({
+  data() {
+    return {
+      tab: 'dashboard',
+      sidebarOpen: false,
+      connected: false,
+      busy: false,
+      nodes: [],
+      status: { mode: 'manual', selectedNodeId: null, nodeCount: 0 },
+      filter: '',
+      httpEndpoint: location.origin,
+      socksEndpoint: location.origin.replace(/^http/, 'socks5').replace(/:\d+$/, ':1080'),
+      logs: [],
+      importText: '',
+      importResult: null,
+      manual: { name: '', type: 'http', host: '', port: 8080, username: '', password: '' }
+    };
+  },
+  computed: {
+    title() {
+      return { dashboard: '总览', nodes: '节点列表', import: '批量导入', settings: '设置' }[this.tab];
+    },
+    filtered() {
+      const keyword = this.filter.trim().toLowerCase();
+      if (!keyword) return this.nodes;
+      return this.nodes.filter(n =>
+        n.name.toLowerCase().includes(keyword) ||
+        n.host.toLowerCase().includes(keyword) ||
+        n.type.includes(keyword)
+      );
+    },
+    current() {
+      return this.nodes.find(n => n.id === this.status.selectedNodeId) || null;
+    },
+    modeLabel() {
+      return { manual: '手动', auto: '自动', 'round-robin': '轮询' }[this.status.mode] || this.status.mode;
+    },
+    modeDescription() {
+      return {
+        manual: '固定使用当前选中节点',
+        auto: '按健康检查与延迟自动选择最优节点',
+        'round-robin': '在健康节点之间轮流分发'
+      }[this.status.mode] || '';
+    }
+  },
+  methods: {
+    switchTab(name) {
+      this.tab = name;
+      this.sidebarOpen = false;
+    },
+    healthLabel(health) {
+      return { healthy: '正常', unhealthy: '异常', unknown: '未检测' }[health] || health;
+    },
+    async api(path, options = {}) {
+      const response = await fetch(path, { ...options, headers: { ...AUTH, ...(options.headers || {}) } });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok && !body.ok) throw new Error(body.error || ('HTTP ' + response.status));
+      return body;
+    },
+    pushLog(level, text) {
+      this.logs.push({ level, text, time: new Date().toLocaleTimeString('zh-CN', { hour12: false }) });
+    },
+    async refreshAll() {
+      this.busy = true;
+      try {
+        const [nodes, status] = await Promise.all([this.api('/api/nodes'), this.api('/api/status')]);
+        this.nodes = nodes.data;
+        this.status = status.data;
+        this.connected = true;
+        this.pushLog('info', '已刷新节点与状态');
+      } catch (error) {
+        this.connected = false;
+        this.pushLog('error', '刷新失败：' + error.message);
+      } finally {
+        this.busy = false;
+      }
+    },
+    async selectNode(node) {
+      this.busy = true;
+      try {
+        await this.api(`/api/nodes/${node.id}/select`, { method: 'POST' });
+        this.status.mode = 'manual';
+        this.status.selectedNodeId = node.id;
+        this.pushLog('ok', `手动选用节点「${node.name}」`);
+        await this.refreshAll();
+      } catch (error) {
+        this.pushLog('error', '选用失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    async checkNode(node) {
+      this.busy = true;
+      try {
+        const result = await this.api(`/api/nodes/${node.id}/check`, { method: 'POST' });
+        this.pushLog('info', `节点「${node.name}」检测完成：${this.healthLabel(result.data.health)}（${result.data.latencyMs ?? '超时'} ms）`);
+        await this.refreshAll();
+      } catch (error) {
+        this.pushLog('error', '检测失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    async checkAll() {
+      this.busy = true;
+      try {
+        await this.api('/api/nodes/check-all', { method: 'POST' });
+        this.pushLog('info', '已对全部节点执行健康检查');
+        await this.refreshAll();
+      } catch (error) {
+        this.pushLog('error', '批量检测失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    async removeNode(node) {
+      if (!confirm(`确定删除节点「${node.name}」？`)) return;
+      this.busy = true;
+      try {
+        await this.api(`/api/nodes/${node.id}`, { method: 'DELETE' });
+        this.pushLog('warn', `已删除节点「${node.name}」`);
+        await this.refreshAll();
+      } catch (error) {
+        this.pushLog('error', '删除失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    async doImport() {
+      this.busy = true;
+      try {
+        const result = await this.api('/api/nodes/import', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ links: this.importText })
+        });
+        this.importResult = result.data.length;
+        this.pushLog('ok', `成功导入 ${result.data.length} 个节点`);
+        this.importText = '';
+        await this.refreshAll();
+      } catch (error) {
+        this.importResult = null;
+        this.pushLog('error', '导入失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    async addManual() {
+      if (!this.manual.host || !this.manual.port) { this.pushLog('error', '请填写主机和端口'); return; }
+      this.busy = true;
+      try {
+        const result = await this.api('/api/nodes', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(this.manual)
+        });
+        this.pushLog('ok', `已添加节点「${result.data.name}」`);
+        this.manual = { name: '', type: 'http', host: '', port: 8080, username: '', password: '' };
+        await this.refreshAll();
+      } catch (error) {
+        this.pushLog('error', '添加失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    async setMode(mode) {
+      this.busy = true;
+      try {
+        await this.api('/api/mode', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode })
+        });
+        this.pushLog('info', `运行模式已切换为「${this.modeLabel}」`);
+        await this.refreshAll();
+      } catch (error) {
+        this.pushLog('error', '切换模式失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    toggleSide() { this.tab = 'settings'; },
+    async copy(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        this.pushLog('ok', '已复制到剪贴板');
+      } catch {
+        window.prompt('复制地址：', text);
+      }
+    }
+  },
+  mounted() {
+    this.refreshAll();
+    this.interval = setInterval(() => this.refreshAll(), 15000);
+  },
+  beforeUnmount() { clearInterval(this.interval); }
+}).mount('#app');
+</script>
+</body>
+</html>
