@@ -1,6 +1,11 @@
 'use strict';
 
 const net = require('node:net');
+const { openVlessTunnelFromNode } = require('./vless/lib');
+
+function vlessConnectTarget(node, targetHost, targetPort) {
+  return openVlessTunnelFromNode(node, targetHost, targetPort).then(result => result.stream);
+}
 
 function httpConnectTarget(socket, host, port, proxy) {
   return new Promise((resolve, reject) => {
@@ -150,6 +155,10 @@ function socks5ConnectTarget(socket, host, port, proxy) {
 }
 
 function connectThroughUpstream(upstream, targetHost, targetPort, method = 'http') {
+  if (upstream.type === 'vless') {
+    // VLESS 上游无需前置 TCP：拨号器内部完成 DNS → TLS → WS → VLESS 握手
+    return vlessConnectTarget(upstream, targetHost, targetPort);
+  }
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: upstream.host, port: upstream.port });
     socket.once('error', reject);

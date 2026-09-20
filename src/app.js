@@ -7,6 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { parseNodeBatch } = require('./node-parser');
 const { connectThroughUpstream, connectTunnelThroughUpstream, pipeTunnel } = require('./upstream');
+const { probeVlessNode } = require('./vless/lib');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
@@ -104,6 +105,13 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
     let ok = false;
     let error = null;
     try {
+      if (node.type === 'vless') {
+        // VLESS 节点无法用裸 TCP 探测：真实拨号一条隧道到探测目标，
+        // 隧道建立成功即视为健康（覆盖 DNS→TLS→WS→VLESS 全链路）。
+        const result = await probeVlessNode(node, 'api.ipify.org', 443);
+        ok = true;
+        return manager.applyHealthResult(id, { ok, latencyMs: result.latencyMs, error: null });
+      }
       await new Promise((resolve, reject) => {
         const socket = net.createConnection({ host: node.host, port: node.port });
         const timer = setTimeout(() => socket.destroy(new Error('健康检查超时')), healthTimeoutMs);
@@ -536,14 +544,25 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
         .then(target => {
           tunneling = true;
           client.removeListener('data', onData);
-          const bound = client.localAddress && net.isIP(client.localAddress)
-            ? client.localAddress.split('.').map(Number)
-            : [0, 0, 0, 0];
-          client.write(Buffer.from([0x05, 0x00, 0x00, 0x01, ...bound, 0, 0]));
+          // BND.ADDR 按客户端地址族构造；无法判定时退化为 0.0.0.0:0
+          const local = client.localAddress;
+          let reply;
+          if (local && net.isIP(local) === 6) {
+            const words = [];
+            for (let i = 0; i < 8; i += 1) words.push(local.split(':')[i] || '0');
+            const bytes = Buffer.alloc(16);
+            words.forEach((word, i) => bytes.writeUInt16BE(parseInt(word, 16) || 0, i * 2));
+            reply = Buffer.from([0x05, 0x00, 0x00, 0x04, ...bytes, 0, 0]);
+          } else {
+            const v4 = local && net.isIP(local) === 4 ? local.split('.').map(Number) : [0, 0, 0, 0];
+            reply = Buffer.from([0x05, 0x00, 0x00, 0x01, ...v4, 0, 0]);
+          }
+          client.write(reply);
           if (buffer.length) target.unshift(buffer);
           pipeTunnel(client, target);
         })
-        .catch(() => {
+        .catch((error) => {
+          console.error('[node-to-proxy] SOCKS5 上游连接失败:', error && error.message);
           client.write(Buffer.from([0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
           client.destroy();
         });

@@ -2,8 +2,9 @@
 
 const crypto = require('node:crypto');
 const net = require('node:net');
+const { parseVlessLink } = require('./vless/lib');
 
-const SUPPORTED_TYPES = new Set(['http', 'https', 'socks5']);
+const SUPPORTED_TYPES = new Set(['http', 'https', 'socks5', 'vless']);
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0', '::']);
 
 function cleanText(value, maxLength = 256) {
@@ -40,7 +41,8 @@ function validateNode(input, options = {}) {
     port,
     username: cleanText(input.username, 256),
     password: cleanText(input.password, 1024),
-    enabled: input.enabled !== false
+    enabled: input.enabled !== false,
+    vlessLink: type === 'vless' ? cleanText(input.vlessLink, 4096) : undefined
   };
 }
 
@@ -57,6 +59,21 @@ function parseNodeLink(link, options = {}) {
 
   const rawScheme = url.protocol.replace(/:$/, '').toLowerCase();
   const type = rawScheme === 'socks' ? 'socks5' : rawScheme;
+
+  if (type === 'vless') {
+    const parsed = parseVlessLink(text);
+    const node = {
+      type: 'vless',
+      host: parsed.host,
+      port: parsed.port,
+      username: '',
+      password: '',
+      name: parsed.name || `VLESS ${parsed.host}:${parsed.port}`,
+      vlessLink: text
+    };
+    return validateNode(node, options);
+  }
+
   if (!SUPPORTED_TYPES.has(type)) throw new Error(`不支持的节点协议：${rawScheme}`);
   if (!url.hostname) throw new Error('节点主机不能为空');
 
