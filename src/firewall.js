@@ -91,6 +91,9 @@ class Allowlist {
     if (!isCidr(raw)) throw new Error(`无效的 IP/CIDR：${raw}（支持 IPv4/IPv6，可用前缀如 1.2.3.4 或 2001:db8::/32）`);
     const cidr = normalizeCidr(raw);
     const family = familyOf(cidr);
+    if (cidr === '0.0.0.0/32' || cidr === '::/128') {
+      throw new Error(`${cidr} 只匹配未指定源地址，不代表全部地址；开放全部 IPv4 请使用 0.0.0.0/0，开放全部 IPv6 请使用 ::/0`);
+    }
     if (this.entries.some(entry => entry.cidr === cidr)) throw new Error(`已在白名单中：${cidr}`);
     const entry = { id: crypto.randomUUID(), cidr, family, createdAt: new Date().toISOString() };
     this.entries.push(entry);

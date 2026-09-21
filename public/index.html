@@ -200,11 +200,11 @@
       <div class="panel">
         <div class="panel-head"><span class="panel-title">🎯 IP 白名单（代理端口入口防火墙）</span></div>
         <div class="filterbar">
-          <input class="input" v-model="newAllowedIp" placeholder="如 1.2.3.4 / 2001:db8::/64（IPv4 与 IPv6 均支持，可用前缀）" @keyup.enter="addAllowedIp">
+          <input class="input" v-model="newAllowedIp" placeholder="单个地址如 1.2.3.4；全部 IPv4 用 0.0.0.0/0；全部 IPv6 用 ::/0" @keyup.enter="addAllowedIp">
           <button class="btn btn-primary" @click="addAllowedIp" :disabled="busy || !newAllowedIp.trim()">添加</button>
           <button class="btn" @click="applyFirewall" :disabled="busy">重新下发规则</button>
         </div>
-        <p class="hint">只有下面登记的来源 IP/CIDR 可以访问 HTTP/SOCKS5 代理出口端口（38080 / 38081）。其余来源一律被防火墙 RST 拒绝。立即生效，无需重启。当前防火墙：<b>{{ firewallApplied ? '已生效' : '未生效' }}</b> <span v-if="firewallMsg" class="hint inline">{{ firewallMsg }}</span></p>
+        <p class="hint">只有下面登记的来源 IP/CIDR 可以访问 HTTP/SOCKS5 代理出口端口（38080 / 38081）。其余来源一律被防火墙 RST 拒绝。立即生效，无需重启。开放全部 IPv4 请添加 <code>0.0.0.0/0</code>，不要使用 <code>0.0.0.0</code> 或 <code>0.0.0.0/32</code>；开放全部 IPv6 请添加 <code>::/0</code>。当前防火墙：<b>{{ firewallApplied ? '已生效' : '未生效' }}</b> <span v-if="firewallMsg" class="hint inline">{{ firewallMsg }}</span></p>
         <table class="table" v-if="allowlist.length">
           <thead><tr><th>地址 / 前缀</th><th>类型</th><th>添加时间</th><th></th></tr></thead>
           <tbody>
