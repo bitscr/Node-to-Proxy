@@ -14,7 +14,7 @@ class ConfigStore {
   }
   async save(value) {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const temporary = `${this.filePath}.${process.pid}.tmp`;
+    const temporary = `${this.filePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
     await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}
 `, { mode: 0o600 });
     await fs.rename(temporary, this.filePath);
