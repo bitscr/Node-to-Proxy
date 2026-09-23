@@ -253,6 +253,14 @@
           </div>
         </div>
       </div>
+        <div class="filterbar" v-if="status.mode === 'round-robin'" style="margin-top: 16px;">
+          <div>
+            <label class="card-label">轮询切换时间(S)</label>
+            <input class="input" type="number" min="1" max="86400" step="1" v-model.number="roundRobinIntervalSec" @keyup.enter="saveRoundRobinInterval">
+          </div>
+          <button class="btn btn-primary" @click="saveRoundRobinInterval" :disabled="busy">保存轮询时间</button>
+        </div>
+        <p class="hint" v-if="status.mode === 'round-robin'">单位为秒,允许设置 1 到 86400 的整数。轮询模式会按此时间间隔在健康节点之间切换。</p>
       <div class="panel">
         <div class="panel-head"><span class="panel-title">ℹ️ 关于</span></div>
         <ul class="about-list">
@@ -310,7 +318,8 @@ createApp({
       importResult: null,
       manual: { name: '', type: 'http', host: '', port: 8080, username: '', password: '' },
       portForm: { httpProxyPort: 18999, socksPort: 18998 },
-      savingPorts: false
+      savingPorts: false,
+      roundRobinIntervalSec: 60
     };
   },
   computed: {
@@ -461,6 +470,7 @@ createApp({
         const [nodes, status] = await Promise.all([this.api('/api/nodes'), this.api('/api/status')]);
         this.nodes = nodes.data;
         this.status = status.data;
+        this.roundRobinIntervalSec = status.data.roundRobinIntervalSec || 60;
         const ep = (status.data.endpoints || {});
         const net = ep.network || {};
         const host6 = net.ipv6 ? (net.ipv6.includes(':') ? `[${net.ipv6}]` : net.ipv6) : '';
@@ -572,6 +582,26 @@ createApp({
         await this.refreshAll();
       } catch (error) {
         this.pushLog('error', '切换模式失败：' + error.message);
+      } finally { this.busy = false; }
+    },
+    async saveRoundRobinInterval() {
+      const seconds = Number(this.roundRobinIntervalSec);
+      if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) {
+        this.pushLog('error', '轮询时间必须是 1 到 86400 秒之间的整数');
+        return;
+      }
+      this.busy = true;
+      try {
+        const result = await this.api('/api/round-robin-interval', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ seconds })
+        });
+        this.status = result.data;
+        this.roundRobinIntervalSec = result.data.roundRobinIntervalSec;
+        this.pushLog('ok', `轮询时间已设置为 ${seconds} 秒`);
+      } catch (error) {
+        this.pushLog('error', '保存轮询时间失败:' + error.message);
       } finally { this.busy = false; }
     },
     async savePorts() {

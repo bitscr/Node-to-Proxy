@@ -514,7 +514,7 @@ test('代理回环防护：目标指向本地出口端口时拒绝建立隧道',
   assert.match(response, /400/);
 });
 
-test('轮询模式：连续选择会依次切换健康节点', async t => {
+test('轮询模式:窗口内保持节点,到期后切换健康节点', async t => {
   const upstreamA = await startHttpUpstream();
   const upstreamB = await startHttpUpstream();
   t.after(() => upstreamA.close());
@@ -532,15 +532,23 @@ test('轮询模式：连续选择会依次切换健康节点', async t => {
 
   const a = await manager.addNode({ name: 'A', type: 'http', host: '127.0.0.1', port: upstreamA.port });
   const b = await manager.addNode({ name: 'B', type: 'http', host: '127.0.0.1', port: upstreamB.port });
+  await manager.setRoundRobinInterval(1);
   await manager.setMode('round-robin');
-  // 先做健康检查，让两个节点都是 healthy
+  // 先做健康检查,让两个节点都是 healthy
   await manager.updateNode(a.id, { health: 'healthy', latencyMs: 10 });
   await manager.updateNode(b.id, { health: 'healthy', latencyMs: 20 });
 
+  // 窗口内连续选择保持同一节点
   const picked = [];
-  for (let i = 0; i < 4; i++) {
-    const node = manager.getSelectedNode();
-    picked.push(node.name);
-  }
-  assert.deepEqual(picked, ['A', 'B', 'A', 'B']);
+  for (let i = 0; i < 2; i++) picked.push(manager.getSelectedNode().name);
+  assert.deepEqual(picked, ['A', 'A']);
+
+  // 到期后切换到下一个健康节点
+  manager.state.nextRoundRobinAt = new Date(Date.now() - 1).toISOString();
+  assert.equal(manager.getSelectedNode().name, 'B');
+  assert.equal(manager.getSelectedNode().name, 'B');
+
+  // 再到期,回到 A
+  manager.state.nextRoundRobinAt = new Date(Date.now() - 1).toISOString();
+  assert.equal(manager.getSelectedNode().name, 'A');
 });

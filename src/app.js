@@ -228,6 +228,10 @@ async function createApplication({ manager, apiToken = '', healthIntervalMs = 30
         const saved = await readSettings();
         return json(res, 200, { ok: true, data: { endpoints, settings: saved } });
       }
+      if (url.pathname === '/api/round-robin-interval' && req.method === 'PUT') {
+        const body = await readJson(req);
+        return json(res, 200, { ok: true, data: await manager.setRoundRobinInterval(body.seconds) });
+      }
       if (url.pathname === '/api/settings' && req.method === 'PATCH') {
         const body = await readJson(req);
         const patch = {};

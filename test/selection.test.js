@@ -118,7 +118,7 @@ test('低延迟切换受冷却期与最小改善阈值约束', async () => {
   assert.equal(manager.getSelectedNode().id, cand.id);
 });
 
-test('轮询模式在所有可用节点间轮换并跳过自动禁用节点', async () => {
+test('轮询模式按时间窗口保持节点，到期后切换并跳过禁用节点', async () => {
   const manager = await makeManager();
   const a = await manager.addNode({ name: 'A', type: 'http', host: 'a.example', port: 8080 });
   const b = await manager.addNode({ name: 'B', type: 'http', host: 'b.example', port: 8081 });
@@ -127,16 +127,20 @@ test('轮询模式在所有可用节点间轮换并跳过自动禁用节点', as
   await manager.updateNode(b.id, { health: 'healthy', latencyMs: 20 });
   await manager.updateNode(c.id, { health: 'healthy', latencyMs: 30 });
 
+  await manager.setRoundRobinInterval(30);
   await manager.setMode('round-robin');
-  const order = [];
-  for (let i = 0; i < 6; i++) order.push(manager.getSelectedNode().name);
-  assert.deepEqual(order, ['A', 'B', 'C', 'A', 'B', 'C']);
+  assert.deepEqual(
+    [manager.getSelectedNode().name, manager.getSelectedNode().name],
+    ['A', 'A']
+  );
 
-  // 禁用 B 后轮换跳过它（池子变为 [A, C]，索引 6 % 2 = 0 从 A 续轮）
-  await manager.updateNode(b.id, { enabled: false });
-  const order2 = [];
-  for (let i = 0; i < 4; i++) order2.push(manager.getSelectedNode().name);
-  assert.deepEqual(order2, ['A', 'C', 'A', 'C']);
+  manager.state.nextRoundRobinAt = new Date(Date.now() - 1).toISOString();
+  assert.equal(manager.getSelectedNode().name, 'B');
+  assert.equal(manager.getSelectedNode().name, 'B');
+
+  await manager.updateNode(c.id, { enabled: false });
+  manager.state.nextRoundRobinAt = new Date(Date.now() - 1).toISOString();
+  assert.equal(manager.getSelectedNode().name, 'A');
 });
 
 test('手动模式忽略健康状态，始终返回所选节点', async () => {

@@ -24,7 +24,9 @@ class NodeManager {
       activeNodeId: null,
       activeChangedAt: null,
       mode: 'manual',
-      lastSwitchAt: null
+      lastSwitchAt: null,
+      roundRobinIntervalSec: 60,
+      nextRoundRobinAt: null
     };
     this.mutation = Promise.resolve();
     this.roundRobinIndex = 0;
@@ -62,6 +64,8 @@ class NodeManager {
       activeNodeId: this.state.activeNodeId || null,
       activeChangedAt: this.state.activeChangedAt || null,
       mode: this.state.mode,
+      roundRobinIntervalSec: this.state.roundRobinIntervalSec,
+      nextRoundRobinAt: this.state.nextRoundRobinAt,
       nodeCount: this.state.nodes.length,
       usableNodeCount: usableCount
     };
@@ -140,11 +144,20 @@ class NodeManager {
       return { ...selected };
     }
 
-    // round-robin：在可用节点（启用且未被自动禁用）间轮换
-    const index = this.roundRobinIndex % pool.length;
+    // round-robin：按设定秒数保持当前节点，到期后切换到下一个可用节点
+    const now = Date.now();
+    const intervalMs = Math.max(1, Number(this.state.roundRobinIntervalSec) || 60) * 1000;
+    const currentIndex = pool.findIndex(node => node.id === this.state.selectedNodeId);
+    const nextAt = this.state.nextRoundRobinAt ? Date.parse(this.state.nextRoundRobinAt) : 0;
+    let index = currentIndex >= 0 ? currentIndex : 0;
+    if (currentIndex < 0 || !nextAt || now >= nextAt) {
+      if (currentIndex >= 0) index = (currentIndex + 1) % pool.length;
+      this.state.selectedNodeId = pool[index].id;
+      this.state.lastSwitchAt = new Date(now).toISOString();
+      this.state.nextRoundRobinAt = new Date(now + intervalMs).toISOString();
+      void this._save();
+    }
     const selected = pool[index];
-    this.roundRobinIndex = (index + 1) % pool.length;
-    this.state.selectedNodeId = selected.id;
     this._markActive(selected);
     return { ...selected };
   }
@@ -278,6 +291,21 @@ class NodeManager {
       this.state.lastSwitchAt = new Date().toISOString();
       await this._save();
       return { ...node };
+    });
+  }
+
+  setRoundRobinInterval(seconds) {
+    return this._locked(async () => {
+      const value = Number(seconds);
+      if (!Number.isInteger(value) || value < 1 || value > 86400) {
+        throw new Error('轮询间隔必须是 1 到 86400 秒之间的整数');
+      }
+      this.state.roundRobinIntervalSec = value;
+      this.state.nextRoundRobinAt = this.state.mode === 'round-robin'
+        ? new Date(Date.now() + value * 1000).toISOString()
+        : null;
+      await this._save();
+      return this.getStatus();
     });
   }
 
